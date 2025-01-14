@@ -1,8 +1,0 @@
-Let's run the unittest [UNIT_TEST_NAME] and verify using pytest and verify using pytest.
-
-Now I want to expand the program so that it separates the categories in a different table calendar_categories. There will be a many to many relation to calendar_evenets
-
-
-Now, let's see if we can make this program also read recurring events. Do not go further then 5 years back and 5 year in the future for recurring events. 
-I'm not interested in the recurring pattern, just treat each occurrence as a seperate event. Also beware if a recurring event was overriden with a specific event.
-We should leave existing implementation intact as much as possible. Test if the current functionality still works.
