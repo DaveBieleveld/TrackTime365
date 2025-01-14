@@ -8,6 +8,8 @@ A Python application that syncs Outlook calendar events from an Office 365 accou
 - Syncs calendar events to SQL Server database
 - Handles event updates and deletions
 - Supports querying events by date range and category
+- Handles recurring events with a 5-year range (past and future)
+- Manages event categories with many-to-many relationships
 - Configurable sync interval
 - Comprehensive logging with rotation
 - Unit tests for core functionality
@@ -222,3 +224,21 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 3. Commit your changes
 4. Push to the branch
 5. Create a Pull Request 
+
+## Database Schema
+
+The application uses the following database tables:
+
+1. `calendar_events`: Stores the main event data
+   - Event details from Outlook
+   - Timestamps and sync information
+   - Links to categories
+
+2. `calendar_categories`: Stores event categories
+   - Category name
+   - Category color
+   - Other metadata
+
+3. `event_categories`: Junction table for many-to-many relationship
+   - Links events to their categories
+   - Enables efficient category-based querying 
