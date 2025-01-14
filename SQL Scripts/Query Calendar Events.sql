@@ -21,14 +21,15 @@ select
         SELECT 
             JSON_QUERY((
                 SELECT c.name as name
-                FROM [TRACK_TIME_365].[dbo].[calendar_event_calendar_category] ec2
+                FROM [TRACK_TIME_365].[dbo].[calendar_event_calendar_category] cecc
                 LEFT JOIN [TRACK_TIME_365].[dbo].[calendar_category] c 
-                    ON ec2.category_id = c.category_id
-                WHERE ec2.event_id = e.event_id
+                    ON cecc.category_id = c.category_id
+                WHERE cecc.event_id = e.event_id
                 FOR JSON PATH
             ))
     ) as categories
 from [TRACK_TIME_365].[dbo].[calendar_event] e
+where CAST(e.start_date AS DATE) = CAST(GETDATE() AS DATE)
 -- where e.start_date <= @EndDate
 -- and e.end_date >= @StartDate
 -- and e.is_deleted = 0

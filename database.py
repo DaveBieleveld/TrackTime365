@@ -278,7 +278,7 @@ class DatabaseManager:
         with connection.cursor() as cursor:
             # Try to get existing category
             cursor.execute("""
-                SELECT category_id, name, is_project, is_activity 
+                SELECT category_id 
                 FROM calendar_category 
                 WHERE name = %s
             """, [category_name])
@@ -290,11 +290,12 @@ class DatabaseManager:
             # Create new category if it doesn't exist
             cursor.execute("""
                 INSERT INTO calendar_category (name)
-                VALUES (%s);
-                SELECT SCOPE_IDENTITY();
+                OUTPUT INSERTED.category_id
+                VALUES (%s)
             """, [category_name])
             
-            category_id = cursor.fetchone()[0]
+            row = cursor.fetchone()
+            category_id = row[0]
             connection.commit()
             return category_id
 
@@ -322,10 +323,40 @@ class DatabaseManager:
         """Get all categories for an event."""
         with connection.cursor() as cursor:
             cursor.execute("""
-                SELECT c.name
+                SELECT c.category_id, c.name
                 FROM calendar_event_calendar_category ec
                 JOIN calendar_category c ON ec.category_id = c.category_id
                 WHERE ec.event_id = %s
             """, [event_id])
             
-            return [row[0] for row in cursor.fetchall()] 
+            return [{'id': row[0], 'name': row[1]} for row in cursor.fetchall()] 
+
+    def get_events_by_category(self, category_name, user_email=None):
+        """Retrieve events with a specific category."""
+        try:
+            with connection.cursor() as cursor:
+                if user_email:
+                    cursor.execute("""
+                        SELECT DISTINCT e.*
+                        FROM calendar_event e
+                        JOIN calendar_event_calendar_category ec ON e.event_id = ec.event_id
+                        JOIN calendar_category c ON ec.category_id = c.category_id
+                        WHERE c.name = %s
+                        AND e.user_email = %s
+                        AND e.is_deleted = 0
+                    """, [category_name, user_email])
+                else:
+                    cursor.execute("""
+                        SELECT DISTINCT e.*
+                        FROM calendar_event e
+                        JOIN calendar_event_calendar_category ec ON e.event_id = ec.event_id
+                        JOIN calendar_category c ON ec.category_id = c.category_id
+                        WHERE c.name = %s
+                        AND e.is_deleted = 0
+                    """, [category_name])
+                
+                columns = [col[0] for col in cursor.description]
+                return [dict(zip(columns, row)) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Database error while getting events by category: {str(e)}")
+            raise 

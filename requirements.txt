@@ -1,5 +1,5 @@
 O365==2.0.26
-mssql-django==1.4
+pyodbc==4.0.39
 python-decouple==3.8
 schedule==1.2.1
 pytest==7.4.3

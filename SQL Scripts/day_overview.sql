@@ -8,7 +8,7 @@ select
      CAST(ROUND(SUM(etm.event_time_minute) / 60.0 / 0.25, 0) * 0.25 AS FLOAT) as total_hours
 from [TRACK_TIME_365].[dbo].[calendar_event] ce
 cross apply (select event_time_minute = DATEDIFF(MINUTE, ce.start_date, ce.end_date)) as etm
-cross
+outer
 apply ( select project_name = ccp.name
         from  [TRACK_TIME_365].[dbo].[calendar_event_calendar_category] cecc
         join [TRACK_TIME_365].[dbo].[calendar_category] ccp 
@@ -25,6 +25,8 @@ apply ( select activity_name = ccp.name
         where ce.event_id = cecc.event_id
         ) as a        
 where ce.is_deleted = 0
+and p.project_name is not null -- only show events with a project
+--and ce.event_id = 'AAMkAGU2ZWJiZjY1LWE1ZjktNGI4Ny05MjY4LTNkNGI4ODk4MmI0YwFRAAgI3S93ZRWAAEYAAAAAPbsEQ2mi4Uyidv0zb3k5WwcAtRS72ihN5UiQHQENYlhgbAAAAAABDQAAtRS72ihN5UiQHQENYlhgbAAAAC3-EQAAEA=='
 and CAST(ce.start_date AS DATE) = CAST(GETDATE() AS DATE)
 group by
     ce.user_email,

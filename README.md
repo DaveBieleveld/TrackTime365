@@ -108,7 +108,7 @@ python main.py
 ```
 
 The application will:
-- Create the required database table if it doesn't exist
+- Create the required database tables if they don't exist
 - Perform an initial sync of calendar events
 - Schedule periodic syncs based on the configured interval
 - Log activities to the `logs` directory
@@ -127,12 +127,13 @@ pytest
 ├── README.md
 ├── requirements.txt
 ├── .env.example
-├── schema.sql
 ├── main.py
 ├── config.py
 ├── database.py
 ├── calendar_sync.py
-└── test_calendar_sync.py
+└── tests/
+    ├── unit_tests/
+    └── test_database_sync.py
 ```
 
 ## Workflow Diagram
@@ -216,6 +217,19 @@ To add new features:
    - Verify network connectivity
    - Review API rate limits
 
+## Database and Reporting
+
+The application maintains calendar events and their categories in SQL Server, enabling:
+- Time tracking by project and activity
+- Daily, weekly, and monthly time summaries
+- User-based time tracking
+- Flexible reporting through SQL queries
+
+Tables are automatically created and managed by the application, with support for:
+- Event storage with comprehensive metadata
+- Category management (projects and activities)
+- Many-to-many relationships between events and categories
+
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
@@ -227,41 +241,3 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 3. Commit your changes
 4. Push to the branch
 5. Create a Pull Request 
-
-## Database Schema
-
-The application uses the following database tables:
-
-1. `calendar_event`: Stores the main event data
-   - `event_id`: Unique identifier
-   - `user_email`: Email of the event owner
-   - `user_name`: Name of the event owner
-   - `subject`: Event subject/title
-   - `start_date`: Event start time (local)
-   - `end_date`: Event end time (local)
-   - `start_date_utc`: Event start time (UTC)
-   - `end_date_utc`: Event end time (UTC)
-   - `description`: Event description
-   - `last_modified`: Last modification timestamp
-   - `is_deleted`: Soft delete flag
-   - `created_at`: Record creation timestamp
-   - `updated_at`: Record update timestamp
-
-2. `calendar_category`: Stores categories with type designation
-   - `category_id`: Unique identifier
-   - `name`: Category name
-   - `is_project`: Flag indicating if category represents a project
-   - `is_activity`: Flag indicating if category represents an activity
-
-3. `calendar_event_calendar_category`: Junction table for many-to-many relationships
-   - Links events to their categories
-   - Enables efficient category-based querying
-   - Supports multiple categories per event
-
-## Reporting Capabilities
-
-The system supports time tracking and reporting features:
-- Aggregation of time spent by project and activity
-- Daily, weekly, and monthly time summaries
-- User-based time tracking
-- Flexible reporting through SQL queries 

@@ -17,7 +17,7 @@ def main():
     for event in events:
         # Get categories for the event
         categories = db.get_event_categories(event['event_id'])
-        category_str = ", ".join(categories) if categories else "No categories"
+        category_str = ", ".join(cat['name'] for cat in categories) if categories else "No categories"
         
         print(f"Event: {event['subject']}")
         print(f"User: {event['user_email']}")

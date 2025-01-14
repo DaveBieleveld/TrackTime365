@@ -61,15 +61,21 @@ class TestLiveCalendarSync(unittest.TestCase):
             
             # Get recent events for verification
             cursor.execute("""
-                SELECT TOP 5 event_id, subject, user_email, start_date_utc, end_date_utc, category 
-                FROM calendar_event 
-                ORDER BY created_at DESC
+                SELECT TOP 5 e.event_id, e.subject, e.user_email, e.start_date, e.end_date,
+                    (
+                        SELECT STRING_AGG(c.name, ', ')
+                        FROM calendar_event_calendar_category ec
+                        JOIN calendar_category c ON ec.category_id = c.category_id
+                        WHERE ec.event_id = e.event_id
+                    ) as categories
+                FROM calendar_event e
+                ORDER BY e.created_at DESC
             """)
             recent_events = cursor.fetchall()
             
             # Verify event properties
             for event in recent_events:
-                event_id, subject, user_email, start_date, end_date, category = event
+                event_id, subject, user_email, start_date, end_date, categories = event
                 self.assertIsNotNone(event_id, "Event ID is missing")
                 self.assertIsNotNone(subject, "Event subject is missing")
                 self.assertIsNotNone(user_email, "User email is missing")
@@ -89,12 +95,17 @@ class TestLiveCalendarSync(unittest.TestCase):
         
         # Verify event dates are within range
         for event in events:
-            # Ensure event dates are timezone-aware by converting to UTC if they aren't already
-            event_start = event['start_date_utc'] if isinstance(event['start_date_utc'], datetime) else datetime.fromisoformat(event['start_date_utc']).replace(tzinfo=timezone.utc)
-            event_end = event['end_date_utc'] if isinstance(event['end_date_utc'], datetime) else datetime.fromisoformat(event['end_date_utc']).replace(tzinfo=timezone.utc)
+            event_start = event['start_date']
+            event_end = event['end_date']
             
-            self.assertGreaterEqual(event_start, start_date, "Event starts before query range")
-            self.assertLessEqual(event_end, end_date, "Event ends after query range")
+            # Convert to UTC if not already
+            if not event_start.tzinfo:
+                event_start = event_start.replace(tzinfo=timezone.utc)
+            if not event_end.tzinfo:
+                event_end = event_end.replace(tzinfo=timezone.utc)
+            
+            self.assertLessEqual(event_start, end_date, "Event starts after query range")
+            self.assertGreaterEqual(event_end, start_date, "Event ends before query range")
 
     def test_category_query(self):
         """Test querying events by category."""
@@ -103,7 +114,11 @@ class TestLiveCalendarSync(unittest.TestCase):
         
         # Get all unique categories
         with connection.cursor() as cursor:
-            cursor.execute("SELECT DISTINCT category FROM calendar_event WHERE category IS NOT NULL")
+            cursor.execute("""
+                SELECT DISTINCT c.name 
+                FROM calendar_category c
+                JOIN calendar_event_calendar_category ec ON c.category_id = ec.category_id
+            """)
             categories = [row[0] for row in cursor.fetchall()]
         
         # Test each category
@@ -113,8 +128,10 @@ class TestLiveCalendarSync(unittest.TestCase):
             
             # Verify all events have the correct category
             for event in events:
-                self.assertEqual(event['category'], category, 
-                               f"Event category mismatch: expected {category}, got {event['category']}")
+                event_categories = self.calendar_sync.db.get_event_categories(event['event_id'])
+                category_names = [cat['name'] for cat in event_categories]
+                self.assertIn(category, category_names,
+                            f"Event missing category: expected {category} in {category_names}")
 
     def test_error_handling(self):
         """Test error handling for invalid queries."""
