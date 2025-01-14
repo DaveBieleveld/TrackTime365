@@ -1,2 +1,4 @@
 .env
 prompts.txt
+o365_token.txt
+TrackTime365.code-workspace

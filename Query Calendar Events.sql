@@ -31,6 +31,20 @@ go
   DROP TABLE IF EXISTS [TRACK_TIME_365].[dbo].[calendar_event];
 */
 
+select 
+    e.*,
+    (
+        SELECT 
+            JSON_QUERY((
+                SELECT c.name as name
+                FROM [TRACK_TIME_365].[dbo].[calendar_event_calendar_category] ec2
+                LEFT JOIN [TRACK_TIME_365].[dbo].[calendar_category] c 
+                    ON ec2.category_id = c.category_id
+                WHERE ec2.event_id = e.event_id
+                FOR JSON PATH
+            ))
+    ) as categories
+from [TRACK_TIME_365].[dbo].[calendar_event] e
 
 select 
     ce.user_email,

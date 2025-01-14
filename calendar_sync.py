@@ -247,26 +247,22 @@ class CalendarSync:
 
                     # Get events directly using Microsoft Graph API
                     now = datetime.now(timezone.utc)
-                    # Set range to 5 years back and 5 years forward
-                    start = (now - timedelta(days=5*365)).replace(microsecond=0).isoformat() + 'Z'
-                    end = (now + timedelta(days=5*365)).replace(microsecond=0).isoformat() + 'Z'
+                    start = (now - timedelta(days=7)).replace(microsecond=0).isoformat() + 'Z'
+                    end = (now + timedelta(days=7)).replace(microsecond=0).isoformat() + 'Z'
 
-                    # Use Microsoft Graph API to get events including recurring event instances
-                    endpoint = f"https://graph.microsoft.com/v1.0/users/{user_email}/calendar/calendarView"
+                    # Use Microsoft Graph API to get events
+                    endpoint = f"https://graph.microsoft.com/v1.0/users/{user_email}/calendar/events"
                     params = {
-                        '$select': 'id,subject,body,start,end,categories,seriesMasterId',
-                        'startDateTime': start,
-                        'endDateTime': end
+                        '$select': 'id,subject,body,start,end,categories',
+                        '$filter': f"start/dateTime ge '{start}' and end/dateTime le '{end}'"
                     }
                     response = self.account.connection.get(endpoint, params=params)
-                        
+                    
                     if not response:
                         logger.error(f"Failed to get events for user {user_email}")
                         continue
                         
                     events_data = response.json().get('value', [])
-                    
-                    # Process each event instance
                     for event_data in events_data:
                         try:
                             # Get the original datetime strings and timezone from Outlook
@@ -303,38 +299,37 @@ class CalendarSync:
                                     logger.warning(f"Failed to use user timezone {user_timezone}, falling back to UTC: {str(e)}")
                                     start_dt = start_utc.astimezone(timezone.utc)
                                     end_dt = end_utc.astimezone(timezone.utc)
-
-                                # Create event object with necessary attributes for process_event
-                                event = type('Event', (), {
-                                    'object_id': event_data.get('id'),
-                                    'subject': event_data.get('subject'),
-                                    'body': event_data.get('body', {}).get('content'),
-                                    'start': start_dt,
-                                    'end': end_dt,
-                                    'categories': event_data.get('categories', [])
-                                })
-
-                                # Process the event
-                                if self.process_event(event, user_email, user.get('displayName')):
-                                    total_events_synced += 1
-
+                                
                             except Exception as e:
-                                logger.error(f"Error processing event times: {str(e)}")
-                                continue
+                                logger.warning(f"Failed to set timezone {timezone_str}, using UTC: {str(e)}")
+                                start_dt = start_naive.replace(tzinfo=timezone.utc)
+                                end_dt = end_naive.replace(tzinfo=timezone.utc)
 
+                            # Convert event data to format expected by process_event
+                            event = type('Event', (), {
+                                'object_id': event_data.get('id'),
+                                'subject': event_data.get('subject'),
+                                'body': event_data.get('body', {}).get('content'),
+                                'categories': event_data.get('categories', []),
+                                'start': start_dt,
+                                'end': end_dt
+                            })
+
+                            # Process the event with original timezone-aware datetimes
+                            self.process_event(event, user_email, user['displayName'])
+                            total_events_synced += 1
                         except Exception as e:
                             logger.error(f"Error processing event: {str(e)}")
-                            continue
 
                 except Exception as e:
-                    logger.error(f"Error syncing calendar for user {user_email}: {str(e)}")
+                    logger.error(f"Error syncing calendar: {str(e)}")
                     continue
 
             logger.info(f"Successfully synced {total_events_synced} events")
             return True
 
         except Exception as e:
-            logger.error(f"Error during calendar sync: {str(e)}")
+            logger.error(f"Error in sync_calendar: {str(e)}")
             return False
 
     def get_events(self, start_date=None, end_date=None, category=None, user_email=None):

@@ -1,6 +1,6 @@
-# Outlook Calendar SQL Sync
+# TrackTime365
 
-A Python application that syncs Outlook calendar events from an Office 365 account to a SQL Server database.
+A Python application that syncs Outlook calendar events from an Office 365 account to a SQL Server database, with support for project and activity tracking.
 
 ## Features
 
@@ -9,11 +9,14 @@ A Python application that syncs Outlook calendar events from an Office 365 accou
 - Handles event updates and deletions
 - Supports querying events by date range and category
 - Handles recurring events with a 5-year range (past and future)
-- Manages event categories with many-to-many relationships
+- Project and activity time tracking
+- Category management with project and activity designations
+- Many-to-many relationships between events and categories
 - Configurable sync interval
 - Comprehensive logging with rotation
 - Unit tests for core functionality
 - Automatic database table creation
+- Time aggregation and reporting capabilities
 
 ## Prerequisites
 
@@ -229,16 +232,36 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 The application uses the following database tables:
 
-1. `calendar_events`: Stores the main event data
-   - Event details from Outlook
-   - Timestamps and sync information
-   - Links to categories
+1. `calendar_event`: Stores the main event data
+   - `event_id`: Unique identifier
+   - `user_email`: Email of the event owner
+   - `user_name`: Name of the event owner
+   - `subject`: Event subject/title
+   - `start_date`: Event start time (local)
+   - `end_date`: Event end time (local)
+   - `start_date_utc`: Event start time (UTC)
+   - `end_date_utc`: Event end time (UTC)
+   - `description`: Event description
+   - `last_modified`: Last modification timestamp
+   - `is_deleted`: Soft delete flag
+   - `created_at`: Record creation timestamp
+   - `updated_at`: Record update timestamp
 
-2. `calendar_categories`: Stores event categories
-   - Category name
-   - Category color
-   - Other metadata
+2. `calendar_category`: Stores categories with type designation
+   - `category_id`: Unique identifier
+   - `name`: Category name
+   - `is_project`: Flag indicating if category represents a project
+   - `is_activity`: Flag indicating if category represents an activity
 
-3. `event_categories`: Junction table for many-to-many relationship
+3. `calendar_event_calendar_category`: Junction table for many-to-many relationships
    - Links events to their categories
-   - Enables efficient category-based querying 
+   - Enables efficient category-based querying
+   - Supports multiple categories per event
+
+## Reporting Capabilities
+
+The system supports time tracking and reporting features:
+- Aggregation of time spent by project and activity
+- Daily, weekly, and monthly time summaries
+- User-based time tracking
+- Flexible reporting through SQL queries 
