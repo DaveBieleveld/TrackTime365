@@ -10,6 +10,7 @@ import tzlocal.windows_tz
 import urllib.request
 import xml.etree.ElementTree as ET
 import functools
+import time
 
 class CalendarSync:
     def __init__(self):
@@ -32,6 +33,33 @@ class CalendarSync:
             token_backend=token_backend,
             protocol=self.protocol
         )
+        
+        # Rate limit settings
+        self.max_retries = 3
+        self.retry_delay = 5  # seconds
+
+    def _make_request_with_retry(self, endpoint, params=None):
+        """Make a request with retry logic for rate limits."""
+        retries = 0
+        while retries < self.max_retries:
+            try:
+                response = self.account.connection.get(endpoint, params=params)
+                if response:
+                    return response
+                elif response.status_code == 429:  # Rate limit exceeded
+                    retry_after = int(response.headers.get('Retry-After', self.retry_delay))
+                    logger.warning(f"Rate limit exceeded. Waiting {retry_after} seconds before retry.")
+                    time.sleep(retry_after)
+                    retries += 1
+                    continue
+                else:
+                    logger.error(f"Request failed with status code: {response.status_code}")
+                    return None
+            except Exception as e:
+                logger.error(f"Request failed: {str(e)}")
+                return None
+        logger.error("Max retries exceeded for request")
+        return None
 
     @staticmethod
     @functools.lru_cache(maxsize=128)
@@ -180,43 +208,71 @@ class CalendarSync:
     def process_event(self, event, user_email, user_name):
         """Process a single calendar event."""
         try:
+            # Log the raw event data for debugging
+            logger.debug(f"Processing event - Subject: {event.get('subject')}")
+            logger.debug(f"Raw categories from API: {event.get('categories', [])}")
+
             # Validate required fields
-            if not all([event.object_id, event.subject]):
+            if not all([event.get('id'), event.get('subject')]):
                 raise AttributeError("Missing required field")
 
             # Get start and end times (these should already be timezone-aware)
-            start_dt = event.start
-            end_dt = event.end
-
-            # Validate dates
-            if end_dt < start_dt:
-                raise ValueError("End date cannot be before start date")
-
-            # Store the original timezone-aware datetimes and their UTC equivalents
-            event_data = {
-                'event_id': event.object_id,
-                'user_email': user_email,
-                'user_name': user_name,
-                'subject': event.subject[:255] if event.subject else None,
-                'description': event.body[:1000] if event.body else None,
-                'start_date': start_dt,  # Original timezone-aware datetime
-                'end_date': end_dt,      # Original timezone-aware datetime
-                'start_date_utc': start_dt.astimezone(timezone.utc),  # Convert to UTC
-                'end_date_utc': end_dt.astimezone(timezone.utc),      # Convert to UTC
-                'last_modified': datetime.now(timezone.utc),
-                'is_deleted': False
-            }
-
-            # Store event in database
-            self.db.upsert_event(event_data)
+            start_str = event['start']['dateTime']
+            end_str = event['end']['dateTime']
+            timezone_str = event['start'].get('timeZone', 'UTC')
             
-            # Handle categories separately
-            categories = [cat.strip() for cat in event.categories] if event.categories else []
-            self.db.link_event_categories(event.object_id, categories)
-            
-            logger.info(f"{'Updated' if event.object_id else 'Inserted new'} event: {event.subject} for user {user_email}")
-            return True
-            
+            # Parse the datetime strings and attach the timezone
+            try:
+                # First parse without timezone
+                start_naive = datetime.fromisoformat(start_str)
+                end_naive = datetime.fromisoformat(end_str)
+                
+                # Get the timezone from the event
+                event_tz = ZoneInfo(timezone_str)
+                
+                # Attach event timezone
+                start_dt = start_naive.replace(tzinfo=event_tz)
+                end_dt = end_naive.replace(tzinfo=event_tz)
+                
+                # Validate dates
+                if end_dt < start_dt:
+                    raise ValueError("End date cannot be before start date")
+
+                # Store the original timezone-aware datetimes and their UTC equivalents
+                event_data = {
+                    'event_id': event['id'],
+                    'user_email': user_email,
+                    'user_name': user_name,
+                    'subject': event['subject'][:255] if event['subject'] else None,
+                    'description': event.get('body', {}).get('content', '')[:1000],
+                    'start_date': start_dt,  # Original timezone-aware datetime
+                    'end_date': end_dt,      # Original timezone-aware datetime
+                    'start_date_utc': start_dt.astimezone(timezone.utc),  # Convert to UTC
+                    'end_date_utc': end_dt.astimezone(timezone.utc),      # Convert to UTC
+                    'timezone': timezone_str,  # Store the original timezone from the event
+                    'last_modified': datetime.now(timezone.utc),
+                    'is_deleted': False
+                }
+                
+                # Store event in database
+                self.db.upsert_event(event_data)
+                
+                # Handle categories separately
+                categories = event.get('categories', [])
+                logger.debug(f"Linking categories for event {event['subject']}: {categories}")
+                self.db.link_event_categories(event['id'], categories)
+                
+                # Log the categories after linking
+                final_categories = self.db.get_event_categories(event['id'])
+                logger.debug(f"Final categories after linking: {final_categories}")
+                
+                logger.info(f"{'Updated' if event['id'] else 'Inserted new'} event: {event['subject']} for user {user_email}")
+                return True
+                
+            except Exception as e:
+                logger.error(f"Error processing event dates: {str(e)}")
+                raise
+                
         except Exception as e:
             logger.error(f"Error processing event: {str(e)}")
             raise
@@ -247,84 +303,66 @@ class CalendarSync:
 
                     # Get events directly using Microsoft Graph API
                     now = datetime.now(timezone.utc)
-                    start = (now - timedelta(days=7)).replace(microsecond=0).isoformat() + 'Z'
-                    end = (now + timedelta(days=7)).replace(microsecond=0).isoformat() + 'Z'
+                    # Extend the sync window to 180 days before and after
+                    start = (now - timedelta(days=180)).replace(microsecond=0).isoformat() + 'Z'
+                    end = (now + timedelta(days=180)).replace(microsecond=0).isoformat() + 'Z'
 
-                    # Use Microsoft Graph API to get events
-                    endpoint = f"https://graph.microsoft.com/v1.0/users/{user_email}/calendar/events"
+                    # Use Microsoft Graph API to get events with retry logic
+                    endpoint = f"https://graph.microsoft.com/v1.0/users/{user_email}/calendar/calendarView"
                     params = {
-                        '$select': 'id,subject,body,start,end,categories',
-                        '$filter': f"start/dateTime ge '{start}' and end/dateTime le '{end}'"
+                        '$select': 'id,subject,body,start,end,categories,extensions,importance,organizer,recurrence,reminderMinutesBeforeStart,responseRequested,responseStatus,sensitivity,showAs,type',
+                        'startDateTime': start,
+                        'endDateTime': end,
+                        '$orderby': 'start/dateTime',
+                        '$top': 50  # Limit results per page
                     }
-                    response = self.account.connection.get(endpoint, params=params)
                     
-                    if not response:
-                        logger.error(f"Failed to get events for user {user_email}")
-                        continue
-                        
-                    events_data = response.json().get('value', [])
-                    for event_data in events_data:
-                        try:
-                            # Get the original datetime strings and timezone from Outlook
-                            start_str = event_data['start']['dateTime']
-                            end_str = event_data['end']['dateTime']
-                            timezone_str = event_data['start'].get('timeZone', 'UTC')
+                    all_events = []
+                    while True:
+                        response = self._make_request_with_retry(endpoint, params=params)
+                        if not response:
+                            logger.error(f"Failed to get events for user {user_email}")
+                            break
                             
-                            # Log the raw event data for debugging
-                            logger.debug(f"Raw event data - Start: {start_str}, End: {end_str}, TimeZone: {timezone_str}")
-                            logger.debug(f"Full event data: {event_data}")
-
-                            # Parse the datetime strings and attach the timezone
-                            try:
-                                # First parse without timezone
-                                start_naive = datetime.fromisoformat(start_str)
-                                end_naive = datetime.fromisoformat(end_str)
-                                
-                                # Get the timezone from the event
-                                event_tz = ZoneInfo(timezone_str)
-                                
-                                # Attach event timezone
-                                start_utc = start_naive.replace(tzinfo=event_tz)
-                                end_utc = end_naive.replace(tzinfo=event_tz)
-                                
-                                # Get user's preferred timezone from mailbox settings
-                                user_timezone = self.get_user_timezone(user_email)
-                                try:
-                                    user_tz = ZoneInfo(user_timezone)
-                                    # Convert to user's timezone
-                                    start_dt = start_utc.astimezone(user_tz)
-                                    end_dt = end_utc.astimezone(user_tz)
-                                    logger.debug(f"Converted times to user timezone {user_timezone} - Start: {start_dt}, End: {end_dt}")
-                                except Exception as e:
-                                    logger.warning(f"Failed to use user timezone {user_timezone}, falling back to UTC: {str(e)}")
-                                    start_dt = start_utc.astimezone(timezone.utc)
-                                    end_dt = end_utc.astimezone(timezone.utc)
-                                
-                            except Exception as e:
-                                logger.warning(f"Failed to set timezone {timezone_str}, using UTC: {str(e)}")
-                                start_dt = start_naive.replace(tzinfo=timezone.utc)
-                                end_dt = end_naive.replace(tzinfo=timezone.utc)
-
-                            # Convert event data to format expected by process_event
-                            event = type('Event', (), {
-                                'object_id': event_data.get('id'),
-                                'subject': event_data.get('subject'),
-                                'body': event_data.get('body', {}).get('content'),
-                                'categories': event_data.get('categories', []),
-                                'start': start_dt,
-                                'end': end_dt
-                            })
-
-                            # Process the event with original timezone-aware datetimes
-                            self.process_event(event, user_email, user['displayName'])
-                            total_events_synced += 1
+                        response_json = response.json()
+                        events_page = response_json.get('value', [])
+                        all_events.extend(events_page)
+                        
+                        # Check if there are more pages
+                        next_link = response_json.get('@odata.nextLink')
+                        if not next_link:
+                            break
+                            
+                        # Update endpoint and params for next page
+                        endpoint = next_link
+                        params = {}  # Parameters are included in the next_link
+                    
+                    logger.debug(f"Retrieved {len(all_events)} total events for user {user_email}")
+                    
+                    # Log all event subjects and dates for debugging
+                    for event in all_events:
+                        subject = event.get('subject', 'No Subject')
+                        start_time = event.get('start', {}).get('dateTime', '')
+                        end_time = event.get('end', {}).get('dateTime', '')
+                        categories = event.get('categories', [])
+                        logger.debug(f"Event from API - Subject: {subject}, Start: {start_time}, End: {end_time}, Categories: {categories}")
+                    
+                    events_processed = 0
+                    for event_data in all_events:
+                        try:
+                            if self.process_event(event_data, user_email, user['displayName']):
+                                events_processed += 1
                         except Exception as e:
-                            logger.error(f"Error processing event: {str(e)}")
-
+                            logger.error(f"Error processing event {event_data.get('subject', 'Unknown')}: {str(e)}")
+                            continue
+                    
+                    logger.info(f"Successfully processed {events_processed} events for user {user_email}")
+                    total_events_synced += events_processed
+                    
                 except Exception as e:
-                    logger.error(f"Error syncing calendar: {str(e)}")
+                    logger.error(f"Error syncing calendar for user {user_email}: {str(e)}")
                     continue
-
+            
             logger.info(f"Successfully synced {total_events_synced} events")
             return True
 
