@@ -56,8 +56,12 @@ To obtain the `CLIENT_ID` and `CLIENT_SECRET` for Office 365 authentication:
    - Choose "Microsoft Graph"
    - Select "Application permissions"
    - Search for and select:
-     - `Calendars.Read`: Allows the application to read calendar events in the organization.
-     - `Calendars.Read.All`: Allows the application to read all calendar events in the organization.
+     - `Calendars.Read`: Allows reading calendar events
+     - `Calendars.Read.All`: Allows reading all calendar events in the organization
+     - `User.Read.All`: Required for accessing user mailboxes and listing users
+     - `MailboxSettings.Read`: Required for accessing user timezone settings
+     - `Calendars.ReadWrite`: (Optional) Required if you want to support calendar write operations
+     - `Calendars.ReadWrite.All`: (Optional) Required if you want to support calendar write operations across the organization
    - Click "Add permissions"
    - Click "Grant admin consent" and confirm. This step is crucial for the application to access the calendar data.
 
