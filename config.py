@@ -1,4 +1,3 @@
-from decouple import config
 from dotenv import load_dotenv
 import logging
 import os
@@ -58,3 +57,13 @@ def setup_logging():
 
 # Initialize logger
 logger = setup_logging() 
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,  # Temporarily set to DEBUG
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(os.path.join('logs', 'calendar_sync.log'))
+    ]
+) 

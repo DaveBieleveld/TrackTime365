@@ -112,19 +112,8 @@ class CalendarSync:
             raise Exception("Not authenticated")
         
         try:
-            # Use Microsoft Graph API to get users with mail
-            # Using a simpler query that just gets all users and filters locally
-            query = "https://graph.microsoft.com/v1.0/users?$select=id,displayName,mail,userPrincipalName"
-            response = self.account.connection.get(query)
-            
-            if not response:
-                raise Exception("Failed to get users")
-                
-            all_users = response.json().get('value', [])
-            # Filter users with mail locally
-            users = [user for user in all_users if user.get('mail')]
-            logger.info(f"Found {len(users)} users with mailboxes")
-            return users
+            # Use the new batch implementation
+            return self.get_users_batch()
             
         except Exception as e:
             logger.error(f"Error getting users: {str(e)}")
@@ -385,3 +374,126 @@ class CalendarSync:
         except Exception as e:
             logger.error(f"Error retrieving events: {str(e)}")
             raise 
+
+    def _make_batch_request(self, requests):
+        """Make a batch request to Microsoft Graph API."""
+        try:
+            if not self.authenticate():
+                logger.error("Not authenticated with Office 365")
+                return None
+
+            batch_endpoint = "https://graph.microsoft.com/v1.0/$batch"
+            batch_payload = {
+                "requests": [
+                    {
+                        "id": str(i + 1),
+                        "method": request.get("method", "GET"),
+                        "url": request["url"].replace("https://graph.microsoft.com/v1.0/", ""),
+                        "headers": request.get("headers", {}),
+                        "body": request.get("body", None)
+                    }
+                    for i, request in enumerate(requests)
+                ]
+            }
+
+            response = self.account.connection.post(batch_endpoint, data=batch_payload)
+            if response:
+                return response.json().get('responses', [])
+            return None
+
+        except Exception as e:
+            logger.error(f"Batch request error: {str(e)}")
+            return None
+
+    def get_users_batch(self, batch_size=20):
+        """Get all users with mailboxes using batch request."""
+        if not self.account.is_authenticated:
+            raise Exception("Not authenticated")
+        
+        try:
+            all_users = []
+            next_link = None
+            
+            # Initial request URL
+            base_url = "https://graph.microsoft.com/v1.0/users?$select=id,displayName,mail,userPrincipalName&$top=999"
+            
+            while True:
+                # Use next_link if available, otherwise use base_url
+                current_url = next_link if next_link else base_url
+                
+                # Make single request instead of batch for the main user list
+                response = self.account.connection.get(current_url)
+                if not response:
+                    logger.error("Failed to get users response")
+                    break
+                
+                response_data = response.json()
+                users = response_data.get('value', [])
+                filtered_users = [user for user in users if user.get('mail')]
+                logger.debug(f"Found {len(filtered_users)} users with mail in this page")
+                all_users.extend(filtered_users)
+                
+                # Check for next page
+                next_link = response_data.get('@odata.nextLink')
+                if not next_link:
+                    break
+            
+            logger.info(f"Found {len(all_users)} users with mailboxes")
+            return all_users
+            
+        except Exception as e:
+            logger.error(f"Error getting users: {str(e)}")
+            raise
+
+    def get_calendar_events_batch(self, user_email, start_time=None, end_time=None, batch_size=20):
+        """Get calendar events using batch request."""
+        try:
+            if not self.authenticate():
+                logger.error("Not authenticated with Office 365")
+                return None
+
+            # Build the base query
+            query = f"users/{user_email}/calendar/events"
+            select_fields = "id,subject,body,start,end,categories"
+            
+            if start_time and end_time:
+                filter_query = f"start/dateTime ge '{start_time.isoformat()}' and end/dateTime le '{end_time.isoformat()}'"
+                base_url = f"https://graph.microsoft.com/v1.0/{query}?$select={select_fields}&$filter={filter_query}"
+            else:
+                base_url = f"https://graph.microsoft.com/v1.0/{query}?$select={select_fields}"
+
+            all_events = []
+            skip = 0
+            
+            while True:
+                # Prepare batch requests
+                batch_requests = []
+                for i in range(batch_size):
+                    batch_requests.append({
+                        "url": f"{base_url}&$skip={skip + i * 50}&$top=50"
+                    })
+                
+                # Make batch request
+                responses = self._make_batch_request(batch_requests)
+                if not responses:
+                    break
+                
+                # Process responses
+                new_events = []
+                for response in responses:
+                    if response.get('status') == 200:
+                        events = response.get('body', {}).get('value', [])
+                        new_events.extend(events)
+                
+                if not new_events:
+                    break
+                    
+                all_events.extend(new_events)
+                skip += batch_size * 50
+                
+            logger.info(f"Retrieved {len(all_events)} events for user {user_email} using batch request")
+            return all_events
+            
+        except Exception as e:
+            logger.error(f"Error getting calendar events in batch: {str(e)}")
+            return None 

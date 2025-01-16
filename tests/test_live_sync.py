@@ -3,27 +3,21 @@ import logging
 from datetime import datetime, timedelta, timezone
 from calendar_sync import CalendarSync
 from dotenv import load_dotenv
-from django.db import connection
 import os
+
+# Load environment variables
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class TestLiveCalendarSync(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        # Load environment variables
-        load_dotenv()
-        
-        # Initialize calendar sync
-        cls.calendar_sync = CalendarSync()
-        
-        # Get initial event count
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT COUNT(*) FROM calendar_event")
-            cls.initial_event_count = cursor.fetchone()[0]
-            logger.info(f"Initial event count: {cls.initial_event_count}")
+class TestLiveSync(unittest.TestCase):
+    def setUp(self):
+        self.calendar_sync = CalendarSync()
+    
+    def tearDown(self):
+        pass  # Connection is managed by DatabaseManager
 
     def test_authentication(self):
         """Test authentication with Office 365."""
@@ -145,11 +139,6 @@ class TestLiveCalendarSync(unittest.TestCase):
         # Test missing parameters
         with self.assertRaises(ValueError):
             self.calendar_sync.get_events()
-
-    @classmethod
-    def tearDownClass(cls):
-        # No need to close connection as Django manages it
-        pass
 
 if __name__ == '__main__':
     unittest.main() 

@@ -1,0 +1,26 @@
+TrackTime365 - Program Objectives
+================================
+
+Primary Objectives
+-----------------
+1. Calendar Synchronization
+   - Sync Microsoft 365 calendar events with a local SQL database
+   - Maintain accurate time tracking across different time zones
+   - Ensure reliable batch operations for calendar event processing
+
+2. Time Tracking
+   - Track time spent on different activities through calendar events
+   - Provide detailed day overview reports
+   - Enable efficient querying of calendar events for analysis
+
+3. Data Management
+   - Secure storage of calendar data in SQL database
+   - Maintain data integrity during sync operations
+   - Support efficient batch operations for data processing
+
+4. Reporting & Analysis
+   - Generate insights about time usage patterns
+   - Provide SQL queries for custom reporting needs
+   - Enable day-level overview of activities
+
+Note: Technical goals and implementation details can be found in technical_goals.txt 

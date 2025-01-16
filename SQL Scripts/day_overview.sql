@@ -13,8 +13,7 @@ from (  select ce.event_id
         , ce.end_date AT TIME ZONE 'UTC' AT TIME ZONE  CURRENT_TIMEZONE_ID() as end_date
         , ce.is_deleted
         from [TRACK_TIME_365].[dbo].[calendar_event] ce
-        where is_deleted = 0
-        and CAST(start_date AS DATE) = CAST(GETDATE() AS DATE)) as ce 
+        where is_deleted = 0 ) as ce 
 cross apply (select event_time_minute = DATEDIFF(MINUTE, ce.start_date, ce.end_date)) as etm
 outer
 apply ( select project_name = ccp.name
@@ -33,7 +32,7 @@ apply ( select activity_name = ccp.name
 where ce.is_deleted = 0
 and p.project_name is not null -- only show events with a project
 --and ce.event_id = 'AAMkAGU2ZWJiZjY1LWE1ZjktNGI4Ny05MjY4LTNkNGI4ODk4MmI0YwFRAAgI3S93ZRWAAEYAAAAAPbsEQ2mi4Uyidv0zb3k5WwcAtRS72ihN5UiQHQENYlhgbAAAAAABDQAAtRS72ihN5UiQHQENYlhgbAAAAC3-EQAAEA=='
-and CAST(ce.start_date AS DATE) = CAST(GETDATE() AS DATE)
+--and CAST(ce.start_date AS DATE) = CAST(GETDATE() AS DATE)
 group by
     ce.user_email,
     ce.user_name, 
@@ -45,3 +44,7 @@ order by
     event_date,
     project_name,
     activity_name
+
+
+    select * from [TRACK_TIME_365].[dbo].[calendar_event]
+    where start_date >= '2025-01-15 00:00:00'
