@@ -266,98 +266,36 @@ class CalendarSync:
             logger.error(f"Error processing event: {str(e)}")
             raise
 
-    def sync_calendar(self):
-        """Sync calendar events for all users."""
+    def sync_calendar(self, user_email=None):
+        """Sync calendar events for a specific user or all users."""
         try:
-            if not self.authenticate():
-                logger.error("Failed to authenticate with Office 365")
-                return False
-
-            users = self.get_users()
-            if not users:
-                logger.error("No users found with mailboxes")
-                return False
-
-            logger.info(f"Found {len(users)} users with mailboxes")
-            total_events_synced = 0
-
+            users = []
+            if user_email:
+                users.append({'mail': user_email})
+            else:
+                users = self.get_users_batch()
+                
             for user in users:
-                try:
-                    user_email = user['mail']
-                    logger.info(f"Syncing calendar for user: {user_email}")
-
-                    calendar = self.get_calendar(user_email)
-                    if not calendar:
-                        continue
-
-                    # Get events directly using Microsoft Graph API
-                    now = datetime.now(timezone.utc)
-                    # Extend the sync window to 180 days before and after
-                    start = (now - timedelta(days=180)).replace(microsecond=0).isoformat() + 'Z'
-                    end = (now + timedelta(days=180)).replace(microsecond=0).isoformat() + 'Z'
-
-                    # Use Microsoft Graph API to get events with retry logic
-                    endpoint = f"https://graph.microsoft.com/v1.0/users/{user_email}/calendar/calendarView"
-                    params = {
-                        '$select': 'id,subject,body,start,end,categories,extensions,importance,organizer,recurrence,reminderMinutesBeforeStart,responseRequested,responseStatus,sensitivity,showAs,type',
-                        'startDateTime': start,
-                        'endDateTime': end,
-                        '$orderby': 'start/dateTime',
-                        '$top': 50  # Limit results per page
-                    }
-                    
-                    all_events = []
-                    while True:
-                        response = self._make_request_with_retry(endpoint, params=params)
-                        if not response:
-                            logger.error(f"Failed to get events for user {user_email}")
-                            break
-                            
-                        response_json = response.json()
-                        events_page = response_json.get('value', [])
-                        all_events.extend(events_page)
-                        
-                        # Check if there are more pages
-                        next_link = response_json.get('@odata.nextLink')
-                        if not next_link:
-                            break
-                            
-                        # Update endpoint and params for next page
-                        endpoint = next_link
-                        params = {}  # Parameters are included in the next_link
-                    
-                    logger.debug(f"Retrieved {len(all_events)} total events for user {user_email}")
-                    
-                    # Log all event subjects and dates for debugging
-                    for event in all_events:
-                        subject = event.get('subject', 'No Subject')
-                        start_time = event.get('start', {}).get('dateTime', '')
-                        end_time = event.get('end', {}).get('dateTime', '')
-                        categories = event.get('categories', [])
-                        logger.debug(f"Event from API - Subject: {subject}, Start: {start_time}, End: {end_time}, Categories: {categories}")
-                    
-                    events_processed = 0
-                    for event_data in all_events:
-                        try:
-                            if self.process_event(event_data, user_email, user['displayName']):
-                                events_processed += 1
-                        except Exception as e:
-                            logger.error(f"Error processing event {event_data.get('subject', 'Unknown')}: {str(e)}")
-                            continue
-                    
-                    logger.info(f"Successfully processed {events_processed} events for user {user_email}")
-                    total_events_synced += events_processed
-                    
-                except Exception as e:
-                    logger.error(f"Error syncing calendar for user {user_email}: {str(e)}")
+                if not user.get('mail'):
                     continue
-            
-            logger.info(f"Successfully synced {total_events_synced} events")
-            return True
-
+                    
+                logger.info(f"Syncing calendar for user: {user['mail']}")
+                try:
+                    events = self.get_calendar_events_batch(user['mail'])
+                    if events is None:  # This indicates an actual error occurred
+                        logger.error(f"Failed to get events for user {user['mail']} due to API error")
+                        continue
+                        
+                    # Store events in database
+                    self.db.store_events(events, user['mail'])
+                    logger.info(f"Successfully synced {len(events)} events for user {user['mail']}")
+                        
+                except Exception as e:
+                    logger.error(f"Error syncing calendar for user {user['mail']}: {str(e)}")
+                    
         except Exception as e:
-            logger.error(f"Error in sync_calendar: {str(e)}")
-            return False
+            logger.error(f"Error in calendar sync: {str(e)}")
+            raise
 
     def get_events(self, start_date=None, end_date=None, category=None, user_email=None):
         """Retrieve events based on filters."""
@@ -383,22 +321,17 @@ class CalendarSync:
                 return None
 
             batch_endpoint = "https://graph.microsoft.com/v1.0/$batch"
-            batch_payload = {
-                "requests": [
-                    {
-                        "id": str(i + 1),
-                        "method": request.get("method", "GET"),
-                        "url": request["url"].replace("https://graph.microsoft.com/v1.0/", ""),
-                        "headers": request.get("headers", {}),
-                        "body": request.get("body", None)
-                    }
-                    for i, request in enumerate(requests)
-                ]
-            }
+            # The requests parameter should be a list, not a dict with 'requests' key
+            batch_payload = {"requests": requests} if isinstance(requests, list) else requests
 
-            response = self.account.connection.post(batch_endpoint, data=batch_payload)
+            # Log the request payload for debugging
+            logger.debug(f"Batch request payload: {batch_payload}")
+
+            response = self.account.connection.post(batch_endpoint, json=batch_payload)
             if response:
-                return response.json().get('responses', [])
+                responses = response.json().get('responses', [])
+                logger.debug(f"Batch response: {responses}")
+                return responses
             return None
 
         except Exception as e:
@@ -446,54 +379,90 @@ class CalendarSync:
             raise
 
     def get_calendar_events_batch(self, user_email, start_time=None, end_time=None, batch_size=20):
-        """Get calendar events using batch request."""
-        try:
-            if not self.authenticate():
-                logger.error("Not authenticated with Office 365")
-                return None
-
-            # Build the base query
-            query = f"users/{user_email}/calendar/events"
-            select_fields = "id,subject,body,start,end,categories"
+        """
+        Get calendar events for a user using batch requests.
+        
+        Args:
+            user_email (str): The email address of the user
+            start_time (datetime): Start time for events (default: 90 days ago)
+            end_time (datetime): End time for events (default: 90 days from now)
+            batch_size (int): Number of events to retrieve per batch request
             
-            if start_time and end_time:
-                filter_query = f"start/dateTime ge '{start_time.isoformat()}' and end/dateTime le '{end_time.isoformat()}'"
-                base_url = f"https://graph.microsoft.com/v1.0/{query}?$select={select_fields}&$filter={filter_query}"
-            else:
-                base_url = f"https://graph.microsoft.com/v1.0/{query}?$select={select_fields}"
-
-            all_events = []
-            skip = 0
+        Returns:
+            list: List of calendar events, or None if there was an API error
+        """
+        if not start_time:
+            start_time = datetime.now(timezone.utc) - timedelta(days=90)
+        if not end_time:
+            end_time = datetime.now(timezone.utc) + timedelta(days=90)
+        
+        start_time_str = start_time.strftime('%Y-%m-%dT%H:%M:%S.000Z')
+        end_time_str = end_time.strftime('%Y-%m-%dT%H:%M:%S.000Z')
+        
+        logger.info(f"Fetching calendar events for {user_email} from {start_time} to {end_time}")
+        
+        select_fields = "id,subject,body,start,end,categories,extensions,importance,organizer,recurrence,reminderMinutesBeforeStart,responseRequested,responseStatus,sensitivity,showAs,type"
+        base_url = f"/users/{user_email}/calendar/calendarView?$select={select_fields}&startDateTime={start_time_str}&endDateTime={end_time_str}&$orderby=start/dateTime"
+        
+        all_events = []
+        skip = 0
+        has_more = True
+        
+        while has_more:
+            batch_requests = []
+            for i in range(20):  # Max 20 requests per batch
+                request = {
+                    'id': str(i + 1),
+                    'method': 'GET',
+                    'url': f"{base_url}&$skip={skip + i * batch_size}&$top={batch_size}",
+                    'headers': {
+                        'Accept': 'application/json',
+                        'Prefer': 'outlook.timezone="UTC"'
+                    }
+                }
+                batch_requests.append(request)
             
-            while True:
-                # Prepare batch requests
-                batch_requests = []
-                for i in range(batch_size):
-                    batch_requests.append({
-                        "url": f"{base_url}&$skip={skip + i * 50}&$top=50"
-                    })
-                
-                # Make batch request
-                responses = self._make_batch_request(batch_requests)
-                if not responses:
-                    break
-                
-                # Process responses
-                new_events = []
+            # Create proper batch payload
+            batch_payload = {'requests': batch_requests}
+            
+            # Make batch request
+            responses = self._make_batch_request(batch_payload)
+            logger.debug(f"Batch response: {responses}")
+            
+            if not responses:
+                logger.error("No response from batch request - API error")
+                return None  # Indicate an actual error occurred
+            
+            try:
+                events_in_batch = []
                 for response in responses:
                     if response.get('status') == 200:
                         events = response.get('body', {}).get('value', [])
-                        new_events.extend(events)
-                
-                if not new_events:
-                    break
+                        if events:
+                            events_in_batch.extend(events)
+                            logger.debug(f"Added {len(events)} events from response")
+                    else:
+                        logger.error(f"Error in batch response: {response}")
+                        return None  # Indicate an actual error occurred
                     
-                all_events.extend(new_events)
-                skip += batch_size * 50
-                
-            logger.info(f"Retrieved {len(all_events)} events for user {user_email} using batch request")
-            return all_events
-            
-        except Exception as e:
-            logger.error(f"Error getting calendar events in batch: {str(e)}")
-            return None 
+                if not events_in_batch:
+                    if skip == 0:
+                        logger.info(f"No calendar events found for {user_email} in the specified time range")
+                    else:
+                        logger.debug("No more events to retrieve")
+                    has_more = False
+                else:
+                    all_events.extend(events_in_batch)
+                    skip += len(batch_requests) * batch_size
+                    logger.info(f"Retrieved {len(events_in_batch)} events in current batch")
+                    
+            except Exception as e:
+                logger.error(f"Error processing batch response: {str(e)}")
+                return None  # Indicate an actual error occurred
+        
+        total_events = len(all_events)
+        if total_events == 0:
+            logger.info(f"No events found for user {user_email} in the specified time range")
+        else:
+            logger.info(f"Retrieved total of {total_events} events for user {user_email}")
+        return all_events 

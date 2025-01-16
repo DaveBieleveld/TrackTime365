@@ -17,6 +17,13 @@ A Python application that syncs Outlook calendar events from an Office 365 accou
 - Unit tests for core functionality
 - Automatic database table creation
 - Time aggregation and reporting capabilities
+- Efficient batch operations for users and calendar events
+- Smart rate limiting with automatic retries
+- Robust timezone handling:
+  - Windows to IANA timezone conversion
+  - Unicode CLDR data integration
+  - Caching for timezone mappings
+  - Local timezone detection and fallback
 
 ## Prerequisites
 
@@ -139,6 +146,34 @@ pytest
     ├── unit_tests/
     └── test_database_sync.py
 ```
+
+## Technical Details
+
+### Batch Operations
+- Efficient batch processing of API requests (20 requests per batch)
+- Automatic pagination handling for large datasets
+- Parallel processing of user and calendar event retrieval
+- Smart error handling with batch-level validation
+
+### Rate Limiting
+- Automatic detection of rate limit errors (HTTP 429)
+- Smart backoff with configurable retry attempts
+- Respects Retry-After headers from the API
+- Cached responses to minimize API calls
+
+### Timezone Management
+- Automatic Windows to IANA timezone conversion
+- Integration with Unicode CLDR data for accurate timezone mappings
+- LRU caching of timezone conversions for performance
+- Fallback to system timezone when user preferences unavailable
+- Handles timezone-aware datetime objects throughout the application
+
+### Performance Optimizations
+- Batch operations to minimize API calls
+- Connection pooling for database operations
+- Caching of frequently accessed data
+- Efficient memory usage with generators and streaming
+- Parallel processing where applicable
 
 ## Workflow Diagram
 
