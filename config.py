@@ -21,7 +21,7 @@ LOG_LEVEL = 'DEBUG'
 SYNC_INTERVAL_MINUTES = int(os.getenv('SYNC_INTERVAL_MINUTES', '15'))
 LOG_RETENTION_DAYS = int(os.getenv('LOG_RETENTION_DAYS', '7'))
 
-# Logging Configuration
+# Configure logging
 def setup_logging():
     # Create logs directory if it doesn't exist
     if not os.path.exists('logs'):
@@ -50,6 +50,9 @@ def setup_logging():
     file_handler.setFormatter(formatter)
     console_handler.setFormatter(formatter)
     
+    # Remove any existing handlers to prevent duplicates
+    logger.handlers = []
+    
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
     
@@ -57,13 +60,3 @@ def setup_logging():
 
 # Initialize logger
 logger = setup_logging() 
-
-# Configure logging
-logging.basicConfig(
-    level=logging.DEBUG,  # Temporarily set to DEBUG
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(os.path.join('logs', 'calendar_sync.log'))
-    ]
-) 

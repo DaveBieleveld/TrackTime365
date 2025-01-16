@@ -41,8 +41,13 @@ class TestLiveSync(unittest.TestCase):
         # Authenticate with Office 365
         self.assertTrue(self.calendar_sync.authenticate(), "Failed to authenticate with Office 365")
         
+        # Set up test date range centered on today
+        center_date = datetime.now(timezone.utc).date()
+        start_date = center_date - timedelta(days=90)
+        end_date = center_date + timedelta(days=90)
+        
         # Perform calendar sync
-        self.assertTrue(self.calendar_sync.sync_calendar(), "Calendar sync failed")
+        self.assertTrue(self.calendar_sync.sync_calendar(start_date=start_date, end_date=end_date), "Calendar sync failed")
         
         # Verify events were added
         with connection.cursor() as cursor:
@@ -104,7 +109,9 @@ class TestLiveSync(unittest.TestCase):
     def test_category_query(self):
         """Test querying events by category."""
         # First sync to ensure we have some events
-        self.calendar_sync.sync_calendar()
+        start_date = datetime.now(timezone.utc).date()
+        end_date = start_date + timedelta(days=7)
+        self.calendar_sync.sync_calendar(start_date=start_date, end_date=end_date)
         
         # Get all unique categories
         with connection.cursor() as cursor:

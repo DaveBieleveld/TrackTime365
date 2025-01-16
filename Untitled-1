@@ -1,0 +1,11 @@
+SELECT 
+    ce.*,
+    STRING_AGG(cc.name, ', ') as categories
+FROM [dbo].[calendar_event] ce
+LEFT JOIN dbo.calendar_event_calendar_category cecc on cecc.event_id = ce.event_id
+LEFT JOIN dbo.calendar_category cc on cc.category_id = cecc.category_id
+WHERE YEAR(ce.start_date) = 2023
+GROUP BY 
+    ce.event_id, ce.user_email, ce.user_name, ce.subject, ce.description,
+    ce.start_date, ce.end_date, ce.last_modified, ce.is_deleted,
+    ce.created_at, ce.updated_at 

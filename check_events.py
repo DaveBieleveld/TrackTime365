@@ -5,9 +5,9 @@ from config import logger
 def main():
     db = DatabaseManager()
     
-    # Get events for the past week
-    end_date = datetime.now(timezone.utc)
-    start_date = end_date - timedelta(days=7)
+    # Get events for January 2023
+    start_date = datetime(2023, 1, 1, tzinfo=timezone.utc)
+    end_date = datetime(2023, 1, 31, tzinfo=timezone.utc)
     
     events = db.get_events_by_date_range(start_date, end_date)
     

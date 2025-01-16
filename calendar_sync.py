@@ -1,5 +1,5 @@
 from O365 import Account, FileSystemTokenBackend, MSGraphProtocol
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone, timedelta
 from config import CLIENT_ID, CLIENT_SECRET, logger
 from database import DatabaseManager
 import os
@@ -11,6 +11,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 import functools
 import time
+import logging
 
 class CalendarSync:
     def __init__(self):
@@ -139,29 +140,32 @@ class CalendarSync:
                     if windows_timezone == 'W. Europe Standard Time':
                         logger.info(f"Using Europe/Amsterdam for W. Europe Standard Time for user {user_email}")
                         return 'Europe/Amsterdam'
-                        
+                    
+                    # Try tzlocal mapping first as it's more reliable for Windows timezones
                     try:
-                        # First try Unicode CLDR mapping
-                        iana_timezone = self.windows_to_iana(windows_timezone)
-                        if iana_timezone:
-                            logger.info(f"Mapped Windows timezone '{windows_timezone}' to IANA timezone '{iana_timezone}' using Unicode CLDR for user {user_email}")
-                            return iana_timezone
-                            
-                        # Fallback to tzlocal mapping
                         iana_timezones = tzlocal.windows_tz.win_tz.get(windows_timezone)
                         if iana_timezones:
                             iana_timezone = iana_timezones[0]
                             logger.info(f"Mapped Windows timezone '{windows_timezone}' to IANA timezone '{iana_timezone}' using tzlocal for user {user_email}")
                             return iana_timezone
                     except Exception as e:
-                        logger.warning(f"Failed to convert Windows timezone '{windows_timezone}' to IANA format: {str(e)}")
+                        logger.warning(f"Failed to map timezone using tzlocal: {str(e)}")
+                        
+                    # Fallback to Unicode CLDR mapping
+                    try:
+                        iana_timezone = self.windows_to_iana(windows_timezone)
+                        if iana_timezone:
+                            logger.info(f"Mapped Windows timezone '{windows_timezone}' to IANA timezone '{iana_timezone}' using Unicode CLDR for user {user_email}")
+                            return iana_timezone
+                    except Exception as e:
+                        logger.warning(f"Failed to map timezone using CLDR: {str(e)}")
                 
                 # If conversion fails or no timezone set, use system timezone
                 system_timezone = str(get_localzone())
                 logger.info(f"Using system timezone {system_timezone} for user {user_email}")
                 return system_timezone
             else:
-                logger.warning(f"Error getting user timezone: {response.text}, using system timezone")
+                logger.warning(f"Error getting user timezone: {response.text if hasattr(response, 'text') else 'No response'}, using system timezone")
                 return str(get_localzone())
                 
         except Exception as e:
@@ -194,107 +198,124 @@ class CalendarSync:
             logger.error(f"Error getting calendar for user {user_email}: {str(e)}")
             return None
 
-    def process_event(self, event, user_email, user_name):
+    def process_event(self, event, user_email):
         """Process a single calendar event."""
         try:
-            # Log the raw event data for debugging
-            logger.debug(f"Processing event - Subject: {event.get('subject')}")
-            logger.debug(f"Raw categories from API: {event.get('categories', [])}")
+            event_id = event.get('id')
+            if not event_id:
+                logger.error("Event missing ID - skipping")
+                return False
 
-            # Validate required fields
-            if not all([event.get('id'), event.get('subject')]):
-                raise AttributeError("Missing required field")
+            # Extract event details
+            event_data = {
+                'event_id': event_id,
+                'user_email': user_email,
+                'user_name': event.get('organizer', {}).get('emailAddress', {}).get('name', ''),
+                'subject': event.get('subject', ''),
+                'description': event.get('body', {}).get('content', ''),
+                'start_date': self._parse_date(event.get('start', {}).get('dateTime')),
+                'end_date': self._parse_date(event.get('end', {}).get('dateTime')),
+                'last_modified': self._parse_date(event.get('lastModifiedDateTime', datetime.now(timezone.utc).isoformat())),
+                'is_deleted': False,
+                'categories': event.get('categories', [])
+            }
 
-            # Get start and end times (these should already be timezone-aware)
-            start_str = event['start']['dateTime']
-            end_str = event['end']['dateTime']
-            timezone_str = event['start'].get('timeZone', 'UTC')
-            
-            # Parse the datetime strings and attach the timezone
+            logger.debug(f"Processing event - Subject: {event_data['subject']}")
+            logger.debug(f"Raw categories from API: {event_data['categories']}")
+
+            # Process the event in the database
             try:
-                # First parse without timezone
-                start_naive = datetime.fromisoformat(start_str)
-                end_naive = datetime.fromisoformat(end_str)
-                
-                # Get the timezone from the event
-                event_tz = ZoneInfo(timezone_str)
-                
-                # Attach event timezone
-                start_dt = start_naive.replace(tzinfo=event_tz)
-                end_dt = end_naive.replace(tzinfo=event_tz)
-                
-                # Validate dates
-                if end_dt < start_dt:
-                    raise ValueError("End date cannot be before start date")
-
-                # Store the original timezone-aware datetimes and their UTC equivalents
-                event_data = {
-                    'event_id': event['id'],
-                    'user_email': user_email,
-                    'user_name': user_name,
-                    'subject': event['subject'][:255] if event['subject'] else None,
-                    'description': event.get('body', {}).get('content', '')[:1000],
-                    'start_date': start_dt,  # Original timezone-aware datetime
-                    'end_date': end_dt,      # Original timezone-aware datetime
-                    'start_date_utc': start_dt.astimezone(timezone.utc),  # Convert to UTC
-                    'end_date_utc': end_dt.astimezone(timezone.utc),      # Convert to UTC
-                    'timezone': timezone_str,  # Store the original timezone from the event
-                    'last_modified': datetime.now(timezone.utc),
-                    'is_deleted': False
-                }
-                
-                # Store event in database
-                self.db.upsert_event(event_data)
-                
-                # Handle categories separately
-                categories = event.get('categories', [])
-                logger.debug(f"Linking categories for event {event['subject']}: {categories}")
-                self.db.link_event_categories(event['id'], categories)
-                
-                # Log the categories after linking
-                final_categories = self.db.get_event_categories(event['id'])
-                logger.debug(f"Final categories after linking: {final_categories}")
-                
-                logger.info(f"{'Updated' if event['id'] else 'Inserted new'} event: {event['subject']} for user {user_email}")
+                updated = self.db.upsert_event(event_data)
+                if updated:
+                    logger.info(f"{'Updated' if event_id else 'Inserted new'} event: {event_data['subject']} for user {user_email}")
+                else:
+                    logger.debug(f"No changes needed for event: {event_data['subject']}")
                 return True
-                
             except Exception as e:
-                logger.error(f"Error processing event dates: {str(e)}")
-                raise
-                
+                logger.error(f"Database error while processing event {event_data['subject']}: {str(e)}")
+                return False
+
         except Exception as e:
             logger.error(f"Error processing event: {str(e)}")
-            raise
+            return False
 
-    def sync_calendar(self, user_email=None):
-        """Sync calendar events for a specific user or all users."""
+    def process_events(self, events, user_email):
+        """Process a list of calendar events sequentially."""
+        if not events:
+            return
+
+        success_count = 0
+        total_events = len(events)
+        
+        for i, event in enumerate(events, 1):
+            logger.info(f"Processing event {i} of {total_events}")
+            if self.process_event(event, user_email):
+                success_count += 1
+            # Add a small delay between events to reduce database load
+            if i < total_events:  # Don't sleep after the last event
+                time.sleep(0.1)
+        
+        logger.info(f"Successfully processed {success_count} out of {total_events} events")
+
+    def sync_calendar(self, start_date, end_date):
+        """Sync calendar events for a user or all users within a date range.
+        
+        Args:
+            start_date (date): Start date for events (inclusive).
+            end_date (date): End date for events (inclusive).
+            user_email (str, optional): Email of specific user to sync. If None, syncs all users.
+        
+        Raises:
+            ValueError: If end_date is before start_date or if dates are not provided.
+        """
         try:
-            users = []
-            if user_email:
-                users.append({'mail': user_email})
-            else:
-                users = self.get_users_batch()
-                
+            if not self.authenticate():
+                logger.error("Not authenticated with Office 365")
+                return
+
+            # Convert datetime to date if needed
+            if isinstance(start_date, datetime):
+                start_date = start_date.date()
+            if isinstance(end_date, datetime):
+                end_date = end_date.date()
+            
+            # Validate date range
+            if end_date < start_date:
+                raise ValueError("End date must be after start date")
+            
+            # Get users to process
+            users = self.get_users()
+
+            if not users:
+                logger.error("No users found to process")
+                return
+
+            # Process each user's calendar
             for user in users:
-                if not user.get('mail'):
+                user_email = user.get('mail')
+                if not user_email:
                     continue
-                    
-                logger.info(f"Syncing calendar for user: {user['mail']}")
+
+                user_name = user.get('displayName', user_email)
+                logger.info(f"Processing calendar for user: {user_email}")
+
                 try:
-                    events = self.get_calendar_events_batch(user['mail'])
-                    if events is None:  # This indicates an actual error occurred
-                        logger.error(f"Failed to get events for user {user['mail']} due to API error")
-                        continue
-                        
-                    # Store events in database
-                    self.db.store_events(events, user['mail'])
-                    logger.info(f"Successfully synced {len(events)} events for user {user['mail']}")
-                        
-                except Exception as e:
-                    logger.error(f"Error syncing calendar for user {user['mail']}: {str(e)}")
+                    logger.info(f"Fetching calendar events for {user_email} from {start_date} to {end_date}")
+
+                    # Get calendar events in batches
+                    events = self.get_calendar_events_batch(user_email, start_date, end_date)
                     
+                    if events:
+                        self.process_events(events, user_email)
+                    else:
+                        logger.info(f"No events found for user {user_email} in the specified time range")
+
+                except Exception as e:
+                    logger.error(f"Error processing calendar for user {user_email}: {str(e)}")
+                    continue
+
         except Exception as e:
-            logger.error(f"Error in calendar sync: {str(e)}")
+            logger.error(f"Error in sync_calendar: {str(e)}")
             raise
 
     def get_events(self, start_date=None, end_date=None, category=None, user_email=None):
@@ -378,29 +399,37 @@ class CalendarSync:
             logger.error(f"Error getting users: {str(e)}")
             raise
 
-    def get_calendar_events_batch(self, user_email, start_time=None, end_time=None, batch_size=20):
+    def get_calendar_events_batch(self, user_email, start_date, end_date, batch_size=20):
         """
         Get calendar events for a user using batch requests.
         
         Args:
             user_email (str): The email address of the user
-            start_time (datetime): Start time for events (default: 90 days ago)
-            end_time (datetime): End time for events (default: 90 days from now)
+            start_date (date): Start date for events (inclusive, starts at 00:00)
+            end_date (date): End date for events (exclusive, ends at 00:00 the next day)
             batch_size (int): Number of events to retrieve per batch request
             
         Returns:
             list: List of calendar events, or None if there was an API error
         """
-        if not start_time:
-            start_time = datetime.now(timezone.utc) - timedelta(days=90)
-        if not end_time:
-            end_time = datetime.now(timezone.utc) + timedelta(days=90)
+        # Get user's timezone
+        user_tz = ZoneInfo(self.get_user_timezone(user_email))
         
-        start_time_str = start_time.strftime('%Y-%m-%dT%H:%M:%S.000Z')
-        end_time_str = end_time.strftime('%Y-%m-%dT%H:%M:%S.000Z')
+        # Convert dates to datetime with explicit boundaries in user's timezone
+        start_time = datetime.combine(start_date, datetime.min.time(), tzinfo=user_tz)
+        end_time = datetime.combine(end_date + timedelta(days=1), datetime.min.time(), tzinfo=user_tz)
         
-        logger.info(f"Fetching calendar events for {user_email} from {start_time} to {end_time}")
+        # Convert times to UTC for the API request
+        start_time_utc = start_time.astimezone(timezone.utc)
+        end_time_utc = end_time.astimezone(timezone.utc)
         
+        start_time_str = start_time_utc.strftime('%Y-%m-%dT%H:%M:%S.000Z')
+        end_time_str = end_time_utc.strftime('%Y-%m-%dT%H:%M:%S.000Z')
+        
+        logger.info(f"Fetching calendar events for {user_email} from {start_date} to {end_date}")
+        logger.debug(f"Using UTC time range: {start_time_utc} to {end_time_utc}")
+        logger.debug(f"User timezone: {user_tz}")
+
         select_fields = "id,subject,body,start,end,categories,extensions,importance,organizer,recurrence,reminderMinutesBeforeStart,responseRequested,responseStatus,sensitivity,showAs,type"
         base_url = f"/users/{user_email}/calendar/calendarView?$select={select_fields}&startDateTime={start_time_str}&endDateTime={end_time_str}&$orderby=start/dateTime"
         
@@ -409,21 +438,19 @@ class CalendarSync:
         has_more = True
         
         while has_more:
-            batch_requests = []
-            for i in range(20):  # Max 20 requests per batch
-                request = {
-                    'id': str(i + 1),
-                    'method': 'GET',
-                    'url': f"{base_url}&$skip={skip + i * batch_size}&$top={batch_size}",
-                    'headers': {
-                        'Accept': 'application/json',
-                        'Prefer': 'outlook.timezone="UTC"'
-                    }
+            # Make a single request instead of a batch
+            request = {
+                'id': '1',
+                'method': 'GET',
+                'url': f"{base_url}&$skip={skip}&$top={batch_size}",
+                'headers': {
+                    'Accept': 'application/json',
+                    'Prefer': 'outlook.timezone="W. Europe Standard Time"'
                 }
-                batch_requests.append(request)
+            }
             
-            # Create proper batch payload
-            batch_payload = {'requests': batch_requests}
+            # Create proper batch payload with just one request
+            batch_payload = {'requests': [request]}
             
             # Make batch request
             responses = self._make_batch_request(batch_payload)
@@ -432,18 +459,18 @@ class CalendarSync:
             if not responses:
                 logger.error("No response from batch request - API error")
                 return None  # Indicate an actual error occurred
-            
+
             try:
                 events_in_batch = []
-                for response in responses:
-                    if response.get('status') == 200:
-                        events = response.get('body', {}).get('value', [])
-                        if events:
-                            events_in_batch.extend(events)
-                            logger.debug(f"Added {len(events)} events from response")
-                    else:
-                        logger.error(f"Error in batch response: {response}")
-                        return None  # Indicate an actual error occurred
+                response = responses[0]  # Only one response since we only made one request
+                if response.get('status') == 200:
+                    events = response.get('body', {}).get('value', [])
+                    if events:
+                        events_in_batch.extend(events)
+                        logger.debug(f"Added {len(events)} events from response")
+                else:
+                    logger.error(f"Error in batch response: {response}")
+                    return None  # Indicate an actual error occurred
                     
                 if not events_in_batch:
                     if skip == 0:
@@ -453,16 +480,31 @@ class CalendarSync:
                     has_more = False
                 else:
                     all_events.extend(events_in_batch)
-                    skip += len(batch_requests) * batch_size
+                    skip += batch_size
                     logger.info(f"Retrieved {len(events_in_batch)} events in current batch")
+                    
+                    # Add a small delay between batches to reduce database load
+                    time.sleep(0.5)
                     
             except Exception as e:
                 logger.error(f"Error processing batch response: {str(e)}")
                 return None  # Indicate an actual error occurred
-        
+
         total_events = len(all_events)
         if total_events == 0:
             logger.info(f"No events found for user {user_email} in the specified time range")
         else:
             logger.info(f"Retrieved total of {total_events} events for user {user_email}")
         return all_events 
+
+    def _parse_date(self, date_str):
+        """Parse date string from the API into a datetime object."""
+        if not date_str:
+            return None
+        try:
+            # Remove the trailing Z if present and parse
+            date_str = date_str.rstrip('Z')
+            return datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error parsing date {date_str}: {str(e)}")
+            return None 

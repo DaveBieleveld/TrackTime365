@@ -244,15 +244,21 @@ def test_get_events_missing_parameters(calendar_sync):
 
 def test_sync_calendar_authentication_failure(calendar_sync):
     """Test calendar sync with authentication failure."""
+    center_date = datetime.now(timezone.utc).date()
+    start_date = center_date - timedelta(days=90)
+    end_date = center_date + timedelta(days=90)
     with patch.object(calendar_sync, 'authenticate', return_value=False):
-        result = calendar_sync.sync_calendar()
+        result = calendar_sync.sync_calendar(start_date=start_date, end_date=end_date)
         assert result is False
 
 def test_sync_calendar_no_users(calendar_sync):
     """Test calendar sync with no users."""
+    center_date = datetime.now(timezone.utc).date()
+    start_date = center_date - timedelta(days=90)
+    end_date = center_date + timedelta(days=90)
     with patch.object(calendar_sync, 'authenticate', return_value=True), \
          patch.object(calendar_sync, 'get_users', return_value=[]):
-        result = calendar_sync.sync_calendar()
+        result = calendar_sync.sync_calendar(start_date=start_date, end_date=end_date)
         assert result is False
 
 def test_get_user_timezone_success(calendar_sync):

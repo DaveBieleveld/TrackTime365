@@ -22,15 +22,15 @@ def main():
         logger.debug("Initializing DatabaseManager")
         db = DatabaseManager()
         
-        # Set date range to include January 12, 2025
-        start_date = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        end_date = datetime(2025, 1, 31, tzinfo=timezone.utc)
+        # Set date range for 2023
+        start_date = datetime(2023, 1, 1, tzinfo=timezone.utc)
+        end_date = datetime(2023, 12, 31, tzinfo=timezone.utc)
         
         logger.debug(f"Querying events between {start_date} and {end_date}")
         events = db.get_events_by_date_range(start_date, end_date)
         
         if not events:
-            logger.warning("No events found in the specified date range")
+            logger.warning("No events found in 2023")
             
             # Try a broader date range to see if we have any events at all
             logger.debug("Trying broader date range")
@@ -50,14 +50,18 @@ def main():
             local_tz = ZoneInfo("Europe/Amsterdam")
             for event in events:
                 # Convert UTC times to local timezone
-                local_start = event['start_date_utc'].astimezone(local_tz)
-                local_end = event['end_date_utc'].astimezone(local_tz)
+                local_start = event['start_date'].astimezone(local_tz)
+                local_end = event['end_date'].astimezone(local_tz)
                 
                 logger.info("=" * 80)
                 logger.info(f"Event: {event['subject']}")
                 logger.info(f"Local Time (Europe/Amsterdam): {local_start.strftime('%Y-%m-%d %H:%M')} to {local_end.strftime('%Y-%m-%d %H:%M')}")
-                logger.info(f"UTC: {event['start_date_utc'].strftime('%Y-%m-%d %H:%M')} to {event['end_date_utc'].strftime('%Y-%m-%d %H:%M')}")
-                logger.info(f"Categories: {', '.join(event['categories']) if event['categories'] else 'None'}")
+                logger.info(f"UTC: {event['start_date'].strftime('%Y-%m-%d %H:%M')} to {event['end_date'].strftime('%Y-%m-%d %H:%M')}")
+                
+                # Get categories for the event
+                categories = db.get_event_categories(event['event_id'])
+                category_names = [cat['name'] for cat in categories]
+                logger.info(f"Categories: {', '.join(category_names) if category_names else 'None'}")
                 logger.info(f"User: {event['user_name']} ({event['user_email']})")
                 if event['description']:
                     logger.info(f"Description: {event['description'][:100]}...")

@@ -18,11 +18,9 @@ A Python application that syncs Outlook calendar events from an Office 365 accou
 - Automatic database table creation
 - Time aggregation and reporting capabilities
 - Efficient batch operations for users and calendar events
-- Smart rate limiting with automatic retries
 - Robust timezone handling:
   - Windows to IANA timezone conversion
   - Unicode CLDR data integration
-  - Caching for timezone mappings
   - Local timezone detection and fallback
 
 ## Prerequisites
@@ -67,19 +65,15 @@ To obtain the `CLIENT_ID` and `CLIENT_SECRET` for Office 365 authentication:
      - `Calendars.Read.All`: Allows reading all calendar events in the organization
      - `User.Read.All`: Required for accessing user mailboxes and listing users
      - `MailboxSettings.Read`: Required for accessing user timezone settings
-     - `Calendars.ReadWrite`: (Optional) Required if you want to support calendar write operations
-     - `Calendars.ReadWrite.All`: (Optional) Required if you want to support calendar write operations across the organization
    - Click "Add permissions"
-   - Click "Grant admin consent" and confirm. This step is crucial for the application to access the calendar data.
-
-These credentials will be used in your `.env` file.
+   - Click "Grant admin consent" and confirm
 
 ## Installation
 
 1. Clone the repository:
 ```bash
 git clone <repository-url>
-cd outlook-calendar-sync
+cd TrackTime365
 ```
 
 2. Create a virtual environment and activate it:
@@ -119,6 +113,7 @@ python main.py
 ```
 
 The application will:
+
 - Create the required database tables if they don't exist
 - Perform an initial sync of calendar events
 - Schedule periodic syncs based on the configured interval
@@ -142,132 +137,99 @@ pytest
 ├── config.py
 ├── database.py
 ├── calendar_sync.py
+├── SQL Scripts/
+│   ├── Query Calendar Events.sql
+│   ├── drop tables.sql
+│   └── enable_cascade_delete.sql
 └── tests/
     ├── unit_tests/
+    │   └── unit_test_calendar_sync.py
+    ├── test_live_sync.py
+    ├── test_batch_operations.py
     └── test_database_sync.py
 ```
 
 ## Technical Details
 
-### Batch Operations
-- Efficient batch processing of API requests (20 requests per batch)
-- Automatic pagination handling for large datasets
-- Parallel processing of user and calendar event retrieval
-- Smart error handling with batch-level validation
+### Database Operations
 
-### Rate Limiting
-- Automatic detection of rate limit errors (HTTP 429)
-- Smart backoff with configurable retry attempts
-- Respects Retry-After headers from the API
-- Cached responses to minimize API calls
+- Efficient batch processing using temporary tables
+- Transaction management with proper rollback handling
+- Cascade delete support for related records
+- Optimized queries for event retrieval and updates
+
+### Error Handling
+
+- Comprehensive error logging with stack traces
+- Transaction rollback on failures
+- Automatic retry for transient errors
+- Detailed debug logging for troubleshooting
 
 ### Timezone Management
+
 - Automatic Windows to IANA timezone conversion
-- Integration with Unicode CLDR data for accurate timezone mappings
-- LRU caching of timezone conversions for performance
-- Fallback to system timezone when user preferences unavailable
-- Handles timezone-aware datetime objects throughout the application
+- Handles timezone-aware datetime objects throughout
+- Fallback to system timezone when needed
+- Proper UTC conversion for database storage
 
-### Performance Optimizations
-- Batch operations to minimize API calls
-- Connection pooling for database operations
-- Caching of frequently accessed data
-- Efficient memory usage with generators and streaming
-- Parallel processing where applicable
+### Testing Coverage
 
-## Workflow Diagram
-
-```plantuml
-@startuml
-|Application|
-start
-:Initialize Config;
-:Setup Logging;
-
-|Calendar Sync|
-:Authenticate with Office 365;
-if (Authentication Successful?) then (yes)
-  :Get Default Calendar;
-  :Query Events;
-  
-  |Database|
-  while (Events Available?) is (yes)
-    :Process Event;
-    :Check Event Exists;
-    if (Event Exists?) then (yes)
-      :Update Event;
-    else (no)
-      :Insert Event;
-    endif
-  endwhile (no)
-  
-  |Application|
-  :Wait for Next Sync;
-  
-else (no)
-  :Log Error;
-  :Wait and Retry;
-endif
-
-stop
-@enduml
-```
-
-## Error Handling
-
-The application includes comprehensive error handling for:
-- Authentication failures
-- API rate limits
-- Database connection issues
-- Event processing errors
-
-Errors are logged with appropriate severity levels and the application will attempt to recover when possible.
-
-## Extending the Application
-
-To add new features:
-
-1. Calendar Operations:
-   - Extend the `CalendarSync` class with new methods
-   - Update the database schema if needed
-
-2. Database Operations:
-   - Add new methods to the `DatabaseManager` class
-   - Create new SQL queries as needed
-
-3. Configuration:
-   - Add new settings to `.env` file
-   - Update `config.py` to handle new settings
+- Unit tests for core functionality
+- Live sync integration tests
+- Database operation tests
+- Batch processing tests
+- Error handling verification
 
 ## Troubleshooting
 
 1. Authentication Issues:
+
    - Verify client credentials in `.env`
    - Check Office 365 permissions
    - Review authentication logs
 
 2. Database Issues:
+
    - Verify connection string
    - Check SQL Server credentials
    - Ensure ODBC driver is installed
+   - Review SQL error logs
 
 3. Sync Issues:
+
    - Check log files for errors
    - Verify network connectivity
-   - Review API rate limits
+   - Check event processing logs
+   - Review database transaction logs
 
-## Database and Reporting
+## Database Schema
 
-The application maintains calendar events and their categories in SQL Server, enabling:
-- Time tracking by project and activity
-- Daily, weekly, and monthly time summaries
-- User-based time tracking
-- Flexible reporting through SQL queries
+The application uses the following main tables:
 
-Tables are automatically created and managed by the application, with support for:
-- Event storage with comprehensive metadata
-- Category management (projects and activities)
-- Many-to-many relationships between events and categories
+- `calendar_event`: Stores event details and metadata
+- `calendar_category`: Manages categories (projects/activities)
+- `calendar_event_calendar_category`: Handles many-to-many relationships
+
+## Future Improvements
+
+1. Performance Enhancements:
+
+   - Implement connection pooling
+   - Add caching layer
+   - Optimize batch sizes
+   - Add parallel processing
+
+2. Security Enhancements:
+
+   - Add rate limiting
+   - Enhance audit logging
+   - Strengthen access controls
+
+3. Monitoring:
+
+   - Add performance metrics
+   - Implement resource monitoring
+   - Add alert mechanisms
 
 ## License
 
@@ -279,4 +241,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 2. Create a feature branch
 3. Commit your changes
 4. Push to the branch
-5. Create a Pull Request 
+5. Create a Pull Request
